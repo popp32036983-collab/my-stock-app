@@ -123,7 +123,6 @@ HTML_TEMPLATE = """
             const response = await fetch(`/api/stock?stocks=${myStocks.join(',')}`);
             const data = await response.json();
             
-            // 雙重保險：如果使用者在請求期間把所有股票刪光了，就不渲染卡片以免畫面衝突
             if (myStocks.length === 0) {
                 document.getElementById('stockListContainer').innerHTML = '<div class="empty-tips">暫無自訂股票，請在上方輸入</div>';
                 return;
@@ -134,6 +133,13 @@ HTML_TEMPLATE = """
         } catch (error) {
             statusMsg.innerText = "更新失敗，請確認網路連線";
         }
+    }
+
+    // 格式化數字格式（轉為小數點後兩位）
+    function formatPrice(val) {
+        if (val === '-' || !val) return '-';
+        let num = parseFloat(val);
+        return isNaN(num) ? val : num.toFixed(2);
     }
 
     // 渲染下方的股票卡片
@@ -152,17 +158,17 @@ HTML_TEMPLATE = """
                     <span class="stock-time">時間: ${stock.time}</span>
                 </div>
                 <div class="stock-prices">
-                    <span class="stock-current">${stock.price}</span>
+                    <span class="stock-current">${formatPrice(stock.price)}</span>
                     <div class="stock-hl">
-                        高 <span class="txt-high">${stock.high}</span> | 
-                        低 <span class="txt-low">${stock.low}</span>
+                        高 <span class="txt-high">${formatPrice(stock.high)}</span> | 
+                        低 <span class="txt-low">${formatPrice(stock.low)}</span>
                     </div>
                 </div>
             </div>
         `).join('');
     }
 
-    // 設定定時器 (已修正為安全且流暢的 5 秒更新)
+    // 設定定時器 (5 秒更新)
     function resetTimer() {
         clearInterval(updateInterval);
         updateInterval = setInterval(fetchStockData, 5000);
@@ -173,7 +179,7 @@ HTML_TEMPLATE = """
 """
 
 # ==========================================
-# 後端 API 邏輯 (完全解決錯位與空值)
+# 後端 API 邏輯
 # ==========================================
 @app.route('/')
 def home():
@@ -185,7 +191,6 @@ def get_stock():
     if not stocks_param:
         return jsonify([])
     
-    # 組合證交所需要的查詢代碼
     query_list = [f"tse_{s}.tw" for s in stocks_param.split(',')]
     url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={'|'.join(query_list)}&_={int(time.time()*1000)}"
     
@@ -196,25 +201,23 @@ def get_stock():
         
         if 'msgArray' in data:
             for info in data['msgArray']:
-                # 【防錯機制 1】嚴格欄位綁定，拒絕盲目對齊
                 current_price = info.get('z', '-')
                 
-                # 【防錯機制 2】防空值：若當前成交價 (z) 是 '-' 或空值，改用開盤價 (o) 或昨收價 (y)
+                # 防空值：若當前成交價 (z) 是 '-' 或空值，改用開盤價 (o) 或昨收價 (y)
                 if current_price == '-' or not current_price:
                     current_price = info.get('o', info.get('y', '-'))
                 
                 output.append({
-                    'code': info.get('c'),      # 股號與卡片綁定
-                    'name': info.get('n'),      # 股名與卡片綁定
-                    'price': current_price,     # 確保有數值的成交價/開盤價
-                    'high': info.get('h', '-'),  # 最高價
-                    'low': info.get('l', '-'),   # 最低價
-                    'time': info.get('t', '-')   # 資料回傳時間
+                    'code': info.get('c'),
+                    'name': info.get('n'),
+                    'price': current_price,
+                    'high': info.get('h', '-'),
+                    'low': info.get('l', '-'),
+                    'time': info.get('t', '-')
                 })
         return jsonify(output)
     except Exception as e:
         return jsonify([]), 500
 
 if __name__ == '__main__':
-    # 本地測試時允許外網連線
     app.run(debug=True, host='0.0.0.0', port=5000)
