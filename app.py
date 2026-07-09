@@ -150,7 +150,7 @@ HTML_TEMPLATE = """
 
     function resetTimer() {
         clearInterval(updateInterval);
-        updateInterval = setInterval(fetchStockData, 5000);
+        updateInterval = setInterval(fetchStockData, 10000);
     }
 </script>
 </body>
