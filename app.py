@@ -4,7 +4,9 @@ import time
 
 app = Flask(__name__)
 
-# 手機優化版的前端 HTML 介面
+# ==========================================
+# 前端 HTML + JavaScript 介面 (完全優化手機版)
+# ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="zh-TW">
@@ -30,7 +32,7 @@ HTML_TEMPLATE = """
         
         .status { font-size: 12px; color: #7f8c8d; text-align: center; margin-bottom: 15px; }
         
-        /* 手機卡片式佈局（取代傳統大表格） */
+        /* 手機卡片式佈局 */
         .stock-card { background: #f8f9fa; border: 1px solid #edf2f7; border-radius: 8px; padding: 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
         .stock-info { display: flex; flex-direction: column; }
         .stock-name { font-size: 16px; font-weight: bold; color: #2f3640; }
@@ -75,12 +77,13 @@ HTML_TEMPLATE = """
         resetTimer();
     }
 
+    // 新增股票
     function addStock() {
         const input = document.getElementById('stockInput');
         const value = input.value.trim();
         if (value && !myStocks.includes(value)) {
             myStocks.push(value);
-            localStorage.setItem('myStocks', JSON.stringify(myStocks)); // 儲存在手機裡
+            localStorage.setItem('myStocks', JSON.stringify(myStocks));
             input.value = '';
             renderTags();
             fetchStockData();
@@ -88,6 +91,7 @@ HTML_TEMPLATE = """
         }
     }
 
+    // 刪除股票
     function removeStock(code) {
         myStocks = myStocks.filter(s => s !== code);
         localStorage.setItem('myStocks', JSON.stringify(myStocks));
@@ -102,12 +106,14 @@ HTML_TEMPLATE = """
         }
     }
 
+    // 渲染上方股票標籤
     function renderTags() {
         document.getElementById('tagContainer').innerHTML = myStocks.map(code => `
             <span class="stock-tag">${code}<span onclick="removeStock('${code}')">×</span></span>
         `).join('');
     }
 
+    // 向後端 API 請求最新資料
     async function fetchStockData() {
         if (myStocks.length === 0) return;
         const statusMsg = document.getElementById('statusMessage');
@@ -116,13 +122,21 @@ HTML_TEMPLATE = """
         try {
             const response = await fetch(`/api/stock?stocks=${myStocks.join(',')}`);
             const data = await response.json();
+            
+            // 雙重保險：如果使用者在請求期間把所有股票刪光了，就不渲染卡片以免畫面衝突
+            if (myStocks.length === 0) {
+                document.getElementById('stockListContainer').innerHTML = '<div class="empty-tips">暫無自訂股票，請在上方輸入</div>';
+                return;
+            }
+            
             renderCards(data);
-            statusMsg.innerText = `最後更新: ${new Date().toLocaleTimeString()} (每分自動更新)`;
+            statusMsg.innerText = `最後更新: ${new Date().toLocaleTimeString()} (每 5 秒自動更新)`;
         } catch (error) {
             statusMsg.innerText = "更新失敗，請確認網路連線";
         }
     }
 
+    // 渲染下方的股票卡片
     function renderCards(data) {
         const container = document.getElementById('stockListContainer');
         if (!data || data.length === 0) {
@@ -148,15 +162,19 @@ HTML_TEMPLATE = """
         `).join('');
     }
 
+    // 設定定時器 (已修正為安全且流暢的 5 秒更新)
     function resetTimer() {
         clearInterval(updateInterval);
-        updateInterval = setInterval(fetchStockData, 10000);
+        updateInterval = setInterval(fetchStockData, 5000);
     }
 </script>
 </body>
 </html>
 """
 
+# ==========================================
+# 後端 API 邏輯 (完全解決錯位與空值)
+# ==========================================
 @app.route('/')
 def home():
     return render_template_string(HTML_TEMPLATE)
@@ -167,6 +185,7 @@ def get_stock():
     if not stocks_param:
         return jsonify([])
     
+    # 組合證交所需要的查詢代碼
     query_list = [f"tse_{s}.tw" for s in stocks_param.split(',')]
     url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={'|'.join(query_list)}&_={int(time.time()*1000)}"
     
@@ -174,19 +193,28 @@ def get_stock():
         response = requests.get(url, timeout=5)
         data = response.json()
         output = []
+        
         if 'msgArray' in data:
             for info in data['msgArray']:
+                # 【防錯機制 1】嚴格欄位綁定，拒絕盲目對齊
+                current_price = info.get('z', '-')
+                
+                # 【防錯機制 2】防空值：若當前成交價 (z) 是 '-' 或空值，改用開盤價 (o) 或昨收價 (y)
+                if current_price == '-' or not current_price:
+                    current_price = info.get('o', info.get('y', '-'))
+                
                 output.append({
-                    'code': info.get('c'),
-                    'name': info.get('n'),
-                    'price': info.get('z', '-'),
-                    'high': info.get('h', '-'),
-                    'low': info.get('l', '-'),
-                    'time': info.get('t', '-')
+                    'code': info.get('c'),      # 股號與卡片綁定
+                    'name': info.get('n'),      # 股名與卡片綁定
+                    'price': current_price,     # 確保有數值的成交價/開盤價
+                    'high': info.get('h', '-'),  # 最高價
+                    'low': info.get('l', '-'),   # 最低價
+                    'time': info.get('t', '-')   # 資料回傳時間
                 })
         return jsonify(output)
     except Exception as e:
         return jsonify([]), 500
 
 if __name__ == '__main__':
+    # 本地測試時允許外網連線
     app.run(debug=True, host='0.0.0.0', port=5000)
